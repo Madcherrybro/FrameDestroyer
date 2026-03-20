@@ -1,7 +1,13 @@
 name: Publish Plugin
 
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -27,7 +33,7 @@ jobs:
           dependency-graph: generate-and-submit
 
       - name: Build Plugin
-        run: ./gradlew build
+        run: ./gradlew clean build
 
       - name: Upload Plugin Artifact
         uses: actions/upload-artifact@v6
@@ -35,12 +41,21 @@ jobs:
           name: plugin
           path: build/libs/*.jar
 
-      - name: Get Plugin Version
-        run: echo "PLUGIN_VERSION=$(grep '^plugin_version=' gradle.properties | cut -d'=' -f2)" >> $GITHUB_ENV
+      - name: Resolve Release Tag
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "RELEASE_TAG=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+          else
+            echo "RELEASE_TAG=v$(grep '^plugin_version=' gradle.properties | cut -d'=' -f2)" >> "$GITHUB_ENV"
+          fi
 
       - name: Publish Plugin Github Release
         uses: ncipollo/release-action@v1
         with:
-          tag: ${{ env.PLUGIN_VERSION }}
+          tag: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TAG }}
           artifacts: build/libs/*.jar
+          allowUpdates: true
+          replacesArtifacts: true
           generateReleaseNotes: true
