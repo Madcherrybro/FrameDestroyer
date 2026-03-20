@@ -1,4 +1,4 @@
-package org.example;
+package org.framebreaker;
 
 public final class BuildConstants {
     public static final String PLUGIN_ID = "mapframebreaker";

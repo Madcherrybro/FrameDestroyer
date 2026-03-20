@@ -1,4 +1,4 @@
-package org.example.module;
+package org.framebreaker.module;
 
 import com.github.rfresh2.EventConsumer;
 import com.zenith.cache.data.entity.Entity;
@@ -8,7 +8,7 @@ import com.zenith.event.client.ClientDeathEvent;
 import com.zenith.feature.pathfinder.goals.GoalXZ;
 import com.zenith.module.api.Module;
 import com.zenith.util.math.MathHelper;
-
+import org.framebreaker.MapFrameBreakerConfig;
 import org.geysermc.mcprotocollib.protocol.data.game.entity.type.EntityType;
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundChatPacket;
 
@@ -17,10 +17,7 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.Arrays;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.ArrayList;
-
 import static com.github.rfresh2.EventConsumer.of;
 import static com.zenith.Globals.BARITONE;
 import static com.zenith.Globals.CACHE;
@@ -83,11 +80,8 @@ public class MapFrameBreakerModule extends Module {
     private static final double TARGET_SWITCH_THRESHOLD = 30.0;
     private static final double PROGRESS_REQUIRED = 1.0;
     private static final int MAX_TARGET_AGE_SECONDS = 600;
-
     private static final int CONNECTION_WARMUP_TICKS = 1200;
 
-    // ==================== COMMAND SYSTEM ====================
-    private final Map<String, CommandHandler> commands = new ConcurrentHashMap<>();
     private long startTime = System.currentTimeMillis();
     private int totalBreakAttempts = 0;
     private int successfulBreaks = 0;
@@ -217,10 +211,12 @@ public class MapFrameBreakerModule extends Module {
     private int lastGoalX = 0;
     private int lastGoalZ = 0;
     private int sameGoalCount = 0;
+    private final MapFrameBreakerConfig config;
+    private final FrameFilterService filterService;
 
-    // Command handler interface
-    private interface CommandHandler {
-        void execute(String[] args);
+    public MapFrameBreakerModule(MapFrameBreakerConfig config) {
+        this.config = config;
+        this.filterService = new FrameFilterService(config);
     }
 
     @Override
@@ -231,29 +227,10 @@ public class MapFrameBreakerModule extends Module {
     @Override
     public void onEnable() {
         super.onEnable();
+        normalizeFilters();
 
-        // Initialize start time
         startTime = System.currentTimeMillis();
-
-        // Register commands
-        registerCommands();
-
-        System.out.println("§a§l========== MAP FRAME BREAKER ==========");
-        System.out.println("§aSigned for: §e§lmadcherrybro");
-        System.out.println("§a§lPRIMARY MISSION: Break frames");
-        System.out.println("§a§lLEVEL-BASED PRIORITY: Same-level frames FIRST!");
-        System.out.println("§a§lY-LEVEL TRACKING: Must reach frame's height!");
-        System.out.println("§a§lSTUCK PREVENTION: Won't get stuck in loops!");
-        System.out.println("§a§lTERRAIN ANALYSIS: If blocks exist → use them. If not → go around.");
-        System.out.println("§a§lPROBLEM SOLVING: Thinks like a player!");
-        System.out.println("§a§lCOMMANDS: !frames, !framestats, !framebreaker, !fb, !help");
-        System.out.println("§aBreak distance: " + BREAK_DISTANCE + " blocks");
-        System.out.println("§aAttempts per frame: " + MAX_BREAK_ATTEMPTS);
-        System.out.println("§a§lPERSISTENCE ZONE: 30 blocks - NEVER GIVE UP WHEN CLOSE!");
-        System.out.println("§a§lBLOCK INTELLIGENCE: Knows what helps reach frames!");
-        System.out.println("§a§lMOSS: 🌿 Perfect for climbing!");
-        System.out.println("§a§lType !frames to see your progress!");
-        System.out.println("§a§l=======================================");
+        printStartupBanner();
 
         lastMoveTime = System.currentTimeMillis();
         lastFrameSeenTime = System.currentTimeMillis();
@@ -264,56 +241,21 @@ public class MapFrameBreakerModule extends Module {
         lastMovementCheck = System.currentTimeMillis();
     }
 
-    private void registerCommands() {
-        // Main command with subcommands (like pearlplus)
-        commands.put("framebreaker", args -> {
-            if (args.length == 0) {
-                sendHelp();
-                return;
-            }
-
-            switch (args[0].toLowerCase()) {
-                case "stats":
-                case "statistics":
-                    showDetailedStats();
-                    break;
-                case "list":
-                    showFrameList(args);
-                    break;
-                case "clear":
-                    if (args.length > 1 && args[1].equalsIgnoreCase("confirm")) {
-                        clearAllData();
-                    } else {
-                        System.out.println("§c[MapFrameBreaker] §fUse 'framebreaker clear confirm' to reset all data");
-                    }
-                    break;
-                case "help":
-                    sendHelp();
-                    break;
-                default:
-                    System.out.println("§cUnknown subcommand. Use 'framebreaker help'");
-            }
-        });
-
-        // Alias for framebreaker (like 'pp' for 'pearlplus')
-        commands.put("fb", args -> {
-            commands.get("framebreaker").execute(args);
-        });
-
-        // Quick stats command
-        commands.put("frames", args -> {
-            showQuickStats();
-        });
-
-        // Detailed stats command
-        commands.put("framestats", args -> {
-            showDetailedStats();
-        });
-
-        // Help command
-        commands.put("help", args -> {
-            sendHelp();
-        });
+    private void printStartupBanner() {
+        System.out.println("[MapFrameBreaker] =====================================");
+        System.out.println("[MapFrameBreaker] Signed for: madcherrybro");
+        System.out.println("[MapFrameBreaker] Primary mission: break frames");
+        System.out.println("[MapFrameBreaker] Priority: same-level frames first");
+        System.out.println("[MapFrameBreaker] Y tracking: reach frame height before giving up");
+        System.out.println("[MapFrameBreaker] Terrain analysis: use nearby blocks or route around");
+        System.out.println("[MapFrameBreaker] Commands: !frames, !framestats, !framebreaker, !fb, !help");
+        System.out.println("[MapFrameBreaker] Break distance: " + BREAK_DISTANCE + " blocks");
+        System.out.println("[MapFrameBreaker] Attempts per frame: " + MAX_BREAK_ATTEMPTS);
+        System.out.println("[MapFrameBreaker] Persistence zone: 30 blocks");
+        System.out.println("[MapFrameBreaker] Map ID filter: " + getMapIdFilterSummary());
+        System.out.println("[MapFrameBreaker] Name filter: " + getNameKeywordFilterSummary());
+        System.out.println("[MapFrameBreaker] Type !frames to see your progress");
+        System.out.println("[MapFrameBreaker] =====================================");
     }
 
     private void showQuickStats() {
@@ -321,52 +263,51 @@ public class MapFrameBreakerModule extends Module {
         long minutes = runtime / 60000;
         long seconds = (runtime % 60000) / 1000;
 
-        System.out.println("§a§l========== FRAME BREAKER STATS ==========");
-        System.out.println("§aFrames broken: §e" + framesBroken);
-        System.out.println("§aAttempts: §e" + totalBreakAttempts);
-        System.out.println("§aSuccess rate: §e" + String.format("%.1f", getSuccessRate()) + "%");
-        System.out.println("§aRuntime: §e" + minutes + "m " + seconds + "s");
-        System.out.println("§a§l========================================");
+        System.out.println("[MapFrameBreaker] ===== Frame Breaker Stats =====");
+        System.out.println("[MapFrameBreaker] Frames broken: " + framesBroken);
+        System.out.println("[MapFrameBreaker] Attempts: " + totalBreakAttempts);
+        System.out.println("[MapFrameBreaker] Success rate: " + String.format("%.1f", getSuccessRate()) + "%");
+        System.out.println("[MapFrameBreaker] Runtime: " + minutes + "m " + seconds + "s");
+        System.out.println("[MapFrameBreaker] Map ID filter: " + getMapIdFilterSummary());
+        System.out.println("[MapFrameBreaker] Name filter: " + getNameKeywordFilterSummary());
+        System.out.println("[MapFrameBreaker] =================================");
     }
-
     private void showDetailedStats() {
         long runtime = System.currentTimeMillis() - startTime;
         long hours = runtime / 3600000;
         long minutes = (runtime % 3600000) / 60000;
 
-        System.out.println("§a§l========== DETAILED STATS ==========");
-        System.out.println("§aFrames broken: §e" + framesBroken);
-        System.out.println("§aTotal attempts: §e" + totalBreakAttempts);
-        System.out.println("§aSuccessful breaks: §e" + successfulBreaks);
-        System.out.println("§aBlocks broken: §e" + blocksBroken);
-        System.out.println("§aUnreachable frames: §e" + unreachableFrames.size());
-        System.out.println("§aBroken frames tracked: §e" + brokenFrames.size());
-        System.out.println("§aRuntime: §e" + hours + "h " + minutes + "m");
-        System.out.println("§aSuccess rate: §e" + String.format("%.1f", getSuccessRate()) + "%");
-        System.out.println("§aCurrent target: " + (currentTarget != null ? "§aYES" : "§cNO"));
-        System.out.println("§a§l====================================");
+        System.out.println("[MapFrameBreaker] ===== Detailed Stats =====");
+        System.out.println("[MapFrameBreaker] Frames broken: " + framesBroken);
+        System.out.println("[MapFrameBreaker] Total attempts: " + totalBreakAttempts);
+        System.out.println("[MapFrameBreaker] Successful breaks: " + successfulBreaks);
+        System.out.println("[MapFrameBreaker] Blocks broken: " + blocksBroken);
+        System.out.println("[MapFrameBreaker] Unreachable frames: " + unreachableFrames.size());
+        System.out.println("[MapFrameBreaker] Broken frames tracked: " + brokenFrames.size());
+        System.out.println("[MapFrameBreaker] Runtime: " + hours + "h " + minutes + "m");
+        System.out.println("[MapFrameBreaker] Success rate: " + String.format("%.1f", getSuccessRate()) + "%");
+        System.out.println("[MapFrameBreaker] Current target: " + (currentTarget != null ? "YES" : "NO"));
+        System.out.println("[MapFrameBreaker] Map ID filter: " + getMapIdFilterSummary());
+        System.out.println("[MapFrameBreaker] Name filter: " + getNameKeywordFilterSummary());
+        System.out.println("[MapFrameBreaker] ===========================");
     }
 
     private void showFrameList(String[] args) {
-        System.out.println("§a§l========== FRAME LIST ==========");
-        System.out.println("§aBroken frames: §e" + brokenFrames.size());
-        System.out.println("§aUnreachable frames: §e" + unreachableFrames.size());
+        System.out.println("[MapFrameBreaker] ===== Frame List =====");
+        System.out.println("[MapFrameBreaker] Broken frames: " + brokenFrames.size());
+        System.out.println("[MapFrameBreaker] Unreachable frames: " + unreachableFrames.size());
 
         if (args.length > 1 && args[1].equalsIgnoreCase("all")) {
             if (!brokenFrames.isEmpty()) {
-                System.out.println("§a§lRecently broken:");
-                brokenFrames.stream()
-                        .limit(10)
-                        .forEach(loc -> System.out.println("§7  " + loc));
+                System.out.println("[MapFrameBreaker] Recently broken:");
+                brokenFrames.stream().limit(10).forEach(loc -> System.out.println("  " + loc));
             }
             if (!unreachableFrames.isEmpty()) {
-                System.out.println("§a§lUnreachable:");
-                unreachableFrames.stream()
-                        .limit(10)
-                        .forEach(loc -> System.out.println("§7  " + loc));
+                System.out.println("[MapFrameBreaker] Unreachable:");
+                unreachableFrames.stream().limit(10).forEach(loc -> System.out.println("  " + loc));
             }
         }
-        System.out.println("§a§l=================================");
+        System.out.println("[MapFrameBreaker] ======================");
     }
 
     private void clearAllData() {
@@ -376,39 +317,205 @@ public class MapFrameBreakerModule extends Module {
         totalBreakAttempts = 0;
         successfulBreaks = 0;
         blocksBroken = 0;
-        System.out.println("§a[MapFrameBreaker] §fAll frame data has been cleared!");
+        System.out.println("[MapFrameBreaker] All frame data has been cleared.");
+    }
+
+    public int getFramesBrokenCount() {
+        return framesBroken;
+    }
+
+    public int getTotalBreakAttemptsCount() {
+        return totalBreakAttempts;
+    }
+
+    public int getSuccessfulBreaksCount() {
+        return successfulBreaks;
+    }
+
+    public int getBlocksBrokenCount() {
+        return blocksBroken;
+    }
+
+    public int getBrokenFrameCount() {
+        return brokenFrames.size();
+    }
+
+    public int getUnreachableFrameCount() {
+        return unreachableFrames.size();
+    }
+
+    public boolean hasCurrentTarget() {
+        return currentTarget != null;
+    }
+
+    public double getSuccessRatePercentage() {
+        return getSuccessRate();
+    }
+
+    public String getMapFilterModeName() {
+        return config.mapIdFilterMode.name();
+    }
+
+    public List<Integer> getFilteredMapIds() {
+        return filterService.getSortedMapIds();
+    }
+
+    public String getNameFilterModeName() {
+        return config.nameKeywordFilterMode.name();
+    }
+
+    public List<String> getFilteredNameKeywords() {
+        return filterService.getSortedNameKeywords();
+    }
+
+    public void setMapIdFilterEnabled(boolean enabled) {
+        config.enableMapIdFilter = enabled;
+    }
+
+    public void setNameKeywordFilterEnabled(boolean enabled) {
+        config.enableNameKeywordFilter = enabled;
+    }
+
+    public void setMapIdFilterMode(MapFrameBreakerConfig.FilterMode mode) {
+        config.mapIdFilterMode = mode;
+    }
+
+    public void setNameKeywordFilterMode(MapFrameBreakerConfig.FilterMode mode) {
+        config.nameKeywordFilterMode = mode;
+    }
+
+    public boolean addFilteredMapId(int mapId) {
+        if (config.mapIds.contains(mapId)) {
+            return false;
+        }
+        config.mapIds.add(mapId);
+        normalizeFilters();
+        return true;
+    }
+
+    public boolean removeFilteredMapId(int mapId) {
+        boolean removed = config.mapIds.remove(Integer.valueOf(mapId));
+        if (removed) {
+            normalizeFilters();
+        }
+        return removed;
+    }
+
+    public boolean clearFilteredMapIds() {
+        if (config.mapIds.isEmpty()) {
+            return false;
+        }
+        config.mapIds.clear();
+        normalizeFilters();
+        return true;
+    }
+
+    public boolean addNameKeyword(String keyword) {
+        String normalizedKeyword = keyword == null ? "" : keyword.trim();
+        if (normalizedKeyword.isBlank()
+                || config.nameKeywords.stream().anyMatch(entry -> entry.equalsIgnoreCase(normalizedKeyword))) {
+            return false;
+        }
+        config.nameKeywords.add(normalizedKeyword);
+        normalizeFilters();
+        return true;
+    }
+
+    public boolean removeNameKeyword(String keyword) {
+        String normalizedKeyword = keyword == null ? "" : keyword.trim();
+        boolean removed = config.nameKeywords.removeIf(entry -> entry.equalsIgnoreCase(normalizedKeyword));
+        if (removed) {
+            normalizeFilters();
+        }
+        return removed;
+    }
+
+    public boolean clearNameKeywords() {
+        if (config.nameKeywords.isEmpty()) {
+            return false;
+        }
+        config.nameKeywords.clear();
+        normalizeFilters();
+        return true;
+    }
+
+    public void setCaseInsensitiveNameMatching(boolean enabled) {
+        config.caseInsensitiveNameMatching = enabled;
+    }
+
+    public void setPartialNameMatching(boolean enabled) {
+        config.partialNameMatching = enabled;
+    }
+
+    public boolean isCaseInsensitiveNameMatching() {
+        return config.caseInsensitiveNameMatching;
+    }
+
+    public boolean isPartialNameMatching() {
+        return config.partialNameMatching;
+    }
+
+    public boolean isMapIdFilterEnabled() {
+        return config.enableMapIdFilter;
+    }
+
+    public boolean isNameKeywordFilterEnabled() {
+        return config.enableNameKeywordFilter;
+    }
+
+    public String getMapIdFilterSummary() {
+        return filterService.getMapIdFilterSummary();
+    }
+
+    public String getNameKeywordFilterSummary() {
+        return filterService.getNameKeywordFilterSummary();
+    }
+
+    public void normalizeFilters() {
+        filterService.normalizeConfig();
+    }
+
+    public void resetFiltersToDefaults() {
+        filterService.resetToDefaults();
+    }
+
+    public FrameTargetSnapshot getCurrentTargetSnapshot() {
+        EntityLiving target = findTrackedTarget();
+        if (target == null) {
+            return null;
+        }
+        currentTarget = target;
+        return filterService.buildSnapshot(target, formatLocation(target), calculate3DDistance(target));
+    }
+
+    public List<String> getBrokenFrameLocations(int limit) {
+        return brokenFrames.stream().limit(limit).toList();
+    }
+
+    public List<String> getUnreachableFrameLocations(int limit) {
+        return unreachableFrames.stream().limit(limit).toList();
+    }
+
+    public void resetTrackingData() {
+        clearAllData();
     }
 
     private void sendHelp() {
-        System.out.println("§a§l========== FRAME BREAKER COMMANDS ==========");
-        System.out.println("§e!frames §7- Show quick statistics");
-        System.out.println("§e!framestats §7- Show detailed statistics");
-        System.out.println("§e!framebreaker stats §7- Same as !framestats");
-        System.out.println("§e!framebreaker list §7- List broken/unreachable frames");
-        System.out.println("§e!framebreaker list all §7- Show all tracked frames");
-        System.out.println("§e!framebreaker clear §7- Clear all frame data (requires confirm)");
-        System.out.println("§e!fb §7- Alias for !framebreaker");
-        System.out.println("§e!help §7- Show this help message");
-        System.out.println("§a§l===========================================");
+        System.out.println("[MapFrameBreaker] ===== Commands =====");
+        System.out.println("!frames - Show quick statistics");
+        System.out.println("!framestats - Show detailed statistics");
+        System.out.println("!framebreaker stats - Same as !framestats");
+        System.out.println("!framebreaker list - List broken/unreachable frames");
+        System.out.println("!framebreaker list all - Show tracked frames");
+        System.out.println("!framebreaker clear - Clear frame data (requires confirm)");
+        System.out.println("!fb - Alias for !framebreaker");
+        System.out.println("!help - Show this help message");
+        System.out.println("[MapFrameBreaker] ====================");
     }
 
     private double getSuccessRate() {
         if (totalBreakAttempts == 0) return 0;
         return (successfulBreaks * 100.0) / totalBreakAttempts;
-    }
-
-    // Public method to handle commands from terminal/console
-    public void executeCommand(String commandLine) {
-        // Handle terminal commands (no prefix needed)
-        String[] parts = commandLine.split(" ");
-        String command = parts[0].toLowerCase();
-        String[] args = parts.length > 1 ? Arrays.copyOfRange(parts, 1, parts.length) : new String[0];
-
-        CommandHandler handler = commands.get(command);
-        if (handler != null) {
-            handler.execute(args);
-            System.out.println("§a[MapFrameBreaker] §fExecuted command: " + commandLine);
-        }
     }
 
     @Override
@@ -427,6 +534,149 @@ public class MapFrameBreakerModule extends Module {
         );
     }
 
+    private String formatLocation(EntityLiving entity) {
+        return (int) entity.getX() + "," + (int) entity.getY() + "," + (int) entity.getZ();
+    }
+
+    private boolean shouldTargetFrame(EntityLiving frame) {
+        return filterService.shouldTargetFrame(frame);
+    }
+
+    private void clearCurrentTarget() {
+        currentTarget = null;
+        breakAttempts = 0;
+        targetTicks = 0;
+        targetStartTime = 0;
+        targetDistanceWhenChosen = 0;
+        closestDistanceToTarget = Double.MAX_VALUE;
+        noProgressTicks = 0;
+        stuckNearTargetCount = 0;
+        inPersistenceZone = false;
+        failedPathAttempts = 0;
+        consecutivePathfindFailures = 0;
+        hasClimbableBlocksNearFrame = false;
+        highestYReached = 0;
+        targetFrameY = 0;
+        yProgressStuckTicks = 0;
+        lastFailedTarget = "";
+    }
+
+    private void clearCurrentTargetAndWander() {
+        clearCurrentTarget();
+        wanderToNewLocation();
+    }
+
+    private void markTargetUnreachable(String location, boolean wander) {
+        unreachableFrames.add(location);
+        if (wander) {
+            clearCurrentTargetAndWander();
+        } else {
+            clearCurrentTarget();
+        }
+    }
+
+    private String getLevelCategory(double yDifference) {
+        if (Math.abs(yDifference) <= SAME_LEVEL_TOLERANCE) {
+            return "SAME LEVEL";
+        }
+        if (yDifference <= NEXT_LEVEL_TOLERANCE && yDifference > SAME_LEVEL_TOLERANCE) {
+            return "NEXT LEVEL";
+        }
+        if (yDifference > NEXT_LEVEL_TOLERANCE) {
+            return "HIGH FRAME";
+        }
+        return "BELOW";
+    }
+
+    private EntityLiving findTrackedTarget() {
+        if (currentTarget == null) {
+            return null;
+        }
+
+        for (Entity entity : CACHE.getEntityCache().getEntities().values()) {
+            if (entity.getEntityType() == EntityType.ITEM_FRAME
+                    && entity instanceof EntityLiving living
+                    && living.getEntityId() == currentTarget.getEntityId()) {
+                return living;
+            }
+        }
+        return null;
+    }
+
+    private void pathToTarget(EntityLiving target) {
+        lastGoalX = (int) target.getX();
+        lastGoalZ = (int) target.getZ();
+        BARITONE.pathTo(new GoalXZ(lastGoalX, lastGoalZ));
+    }
+
+    private void initializeTarget(EntityLiving target, double distance) {
+        clearCurrentTarget();
+        currentTarget = target;
+        targetStartTime = System.currentTimeMillis();
+        targetDistanceWhenChosen = distance;
+        targetFrameY = target.getY();
+        highestYReached = CACHE.getPlayerCache().getY();
+
+        analyzeTerrainForFrame(target);
+
+        if (BARITONE.isActive()) {
+            BARITONE.stop();
+        }
+        pathToTarget(target);
+    }
+
+    private boolean handleConnectionWarmup() {
+        if (!firstConnection) {
+            return false;
+        }
+
+        connectionTicks++;
+        if (connectionTicks < CONNECTION_WARMUP_TICKS) {
+            if (connectionTicks % 20 == 0) {
+                int secondsLeft = (CONNECTION_WARMUP_TICKS - connectionTicks) / 20;
+                System.out.println("Â§7[MapFrameBreaker] Â§fWarmup... " + secondsLeft + "s");
+            }
+            return true;
+        }
+
+        firstConnection = false;
+        System.out.println("Â§a[MapFrameBreaker] Â§fWarmup complete! Let's find some frames!");
+        System.out.println("Â§aType Â§e!help Â§ato see available commands!");
+        return false;
+    }
+
+    private boolean initializeSpawnIfNeeded() {
+        if (spawnSet) {
+            return false;
+        }
+
+        spawnX = MathHelper.floorI(CACHE.getPlayerCache().getX());
+        spawnZ = MathHelper.floorI(CACHE.getPlayerCache().getZ());
+        spawnSet = true;
+        System.out.println("Â§a[MapFrameBreaker] Â§fSpawn at X=" + spawnX + " Z=" + spawnZ + " - Time to hunt frames!");
+        movementCheckStartX = CACHE.getPlayerCache().getX();
+        movementCheckStartZ = CACHE.getPlayerCache().getZ();
+        lastMovementCheck = System.currentTimeMillis();
+        wanderToNewLocation();
+        return true;
+    }
+
+    private boolean processCurrentTarget() {
+        boolean brokeFrame = tryBreakNearbyFrames();
+        if (brokeFrame) {
+            failedPathAttempts = 0;
+            yProgressStuckTicks = 0;
+            consecutivePathfindFailures = 0;
+        }
+
+        if (currentTarget == null) {
+            return false;
+        }
+
+        handleTargetFrame();
+        return true;
+    }
+
     private boolean isMakingProgress() {
         if (currentTarget == null) return true;
 
@@ -442,7 +692,7 @@ public class MapFrameBreakerModule extends Module {
             long stuckTime = System.currentTimeMillis() - lastMoveTime;
 
             if (stuckTime > 10000) {
-                System.out.println("§e[MapFrameBreaker] §fNo movement for " + (stuckTime/1000) + "s - trying different approach");
+                System.out.println("[MapFrameBreaker] No movement for " + (stuckTime / 1000) + "s. Trying a different approach.");
 
                 if (currentTarget != null) {
                     double angle = Math.atan2(
@@ -451,8 +701,8 @@ public class MapFrameBreakerModule extends Module {
                     );
 
                     angle += Math.PI / 2;
-                    int newX = (int)(currentX + Math.cos(angle) * 5);
-                    int newZ = (int)(currentZ + Math.sin(angle) * 5);
+                    int newX = (int) (currentX + Math.cos(angle) * 5);
+                    int newZ = (int) (currentZ + Math.sin(angle) * 5);
 
                     BARITONE.pathTo(new GoalXZ(newX, newZ));
                 }
@@ -470,9 +720,7 @@ public class MapFrameBreakerModule extends Module {
             );
 
             if (totalMovement < MIN_MOVEMENT_THRESHOLD && BARITONE.isActive() && currentTarget != null) {
-                System.out.println("§c[MapFrameBreaker] §fLess than " + MIN_MOVEMENT_THRESHOLD +
-                        " blocks moved in 30s - forcing reset");
-
+                System.out.println("[MapFrameBreaker] Moved less than " + MIN_MOVEMENT_THRESHOLD + " blocks in 30s. Forcing reset.");
                 sendClientPacket(new ServerboundChatPacket("/kill"));
                 isStuck = true;
                 currentTarget = null;
@@ -490,32 +738,8 @@ public class MapFrameBreakerModule extends Module {
     private void handleBotTick(ClientBotTick event) {
         if (CACHE.getPlayerCache().getThePlayer() == null) return;
 
-        if (firstConnection) {
-            connectionTicks++;
-            if (connectionTicks < CONNECTION_WARMUP_TICKS) {
-                if (connectionTicks % 20 == 0) {
-                    int secondsLeft = (CONNECTION_WARMUP_TICKS - connectionTicks) / 20;
-                    System.out.println("§7[MapFrameBreaker] §fWarmup... " + secondsLeft + "s");
-                }
-                return;
-            } else {
-                firstConnection = false;
-                System.out.println("§a[MapFrameBreaker] §fWarmup complete! Let's find some frames!");
-                System.out.println("§aType §e!help §ato see available commands!");
-            }
-        }
-
-        if (!spawnSet) {
-            spawnX = MathHelper.floorI(CACHE.getPlayerCache().getX());
-            spawnZ = MathHelper.floorI(CACHE.getPlayerCache().getZ());
-            spawnSet = true;
-            System.out.println("§a[MapFrameBreaker] §fSpawn at X=" + spawnX + " Z=" + spawnZ + " - Time to hunt frames!");
-            movementCheckStartX = CACHE.getPlayerCache().getX();
-            movementCheckStartZ = CACHE.getPlayerCache().getZ();
-            lastMovementCheck = System.currentTimeMillis();
-            wanderToNewLocation();
-            return;
-        }
+        if (handleConnectionWarmup()) return;
+        if (initializeSpawnIfNeeded()) return;
 
         tickCounter++;
         if (currentTarget != null) targetTicks++;
@@ -523,25 +747,9 @@ public class MapFrameBreakerModule extends Module {
         checkIfStuck();
         if (isStuck) return;
 
-        if (!isMakingProgress()) {
-            return;
-        }
-
-        if (isStuckMiningForFrame()) {
-            return;
-        }
-
-        boolean brokeFrame = tryBreakNearbyFrames();
-        if (brokeFrame) {
-            failedPathAttempts = 0;
-            yProgressStuckTicks = 0;
-            consecutivePathfindFailures = 0;
-        }
-
-        if (currentTarget != null) {
-            handleTargetFrame();
-            return;
-        }
+        if (!isMakingProgress()) return;
+        if (isStuckMiningForFrame()) return;
+        if (processCurrentTarget()) return;
 
         if (tickCounter % SCAN_INTERVAL_TICKS == 0) scanForFrames();
         if (!BARITONE.isActive()) wanderToNewLocation();
@@ -565,7 +773,7 @@ public class MapFrameBreakerModule extends Module {
             if (distToGoal < 2.0 && distanceMoved < 0.3) {
                 sameGoalCount++;
                 if (sameGoalCount > 40) {
-                    System.out.println("§e[MapFrameBreaker] §fStuck near goal - let's try somewhere else");
+                    System.out.println("[MapFrameBreaker] Stuck near goal. Trying somewhere else.");
                     currentTarget = null;
                     if (BARITONE.isActive()) BARITONE.stop();
                     sameGoalCount = 0;
@@ -585,34 +793,33 @@ public class MapFrameBreakerModule extends Module {
             if (stuckTime > 20000 && stuckTime < 21000 && System.currentTimeMillis() - lastStuckLogTime > 5000) {
                 if (currentTarget != null) {
                     double yDiff = currentTarget.getY() - CACHE.getPlayerCache().getY();
-                    System.out.println("§e[MapFrameBreaker] §fHmm, stuck for 20s trying to reach frame " +
-                            String.format("%.1f", yDiff) + " blocks above - analyzing terrain...");
-
+                    System.out.println("[MapFrameBreaker] Stuck for 20s trying to reach frame " +
+                            String.format("%.1f", yDiff) + " blocks above. Analyzing terrain...");
                     analyzeTerrainForFrame(currentTarget);
                 } else {
-                    System.out.println("§e[MapFrameBreaker] §fStuck for 20s with no target - might be trapped");
+                    System.out.println("[MapFrameBreaker] Stuck for 20s with no target.");
                 }
                 lastStuckLogTime = System.currentTimeMillis();
                 stuckMiningCount++;
             }
 
             if (stuckTime > STUCK_TIMEOUT_MS && !isStuck) {
-                System.out.println("§c[MapFrameBreaker] §fCompletely stuck! /kill and respawn to continue mission...");
+                System.out.println("[MapFrameBreaker] Completely stuck. Respawning to continue.");
                 sendClientPacket(new ServerboundChatPacket("/kill"));
                 isStuck = true;
                 currentTarget = null;
                 if (BARITONE.isActive()) BARITONE.stop();
             }
         } else if (System.currentTimeMillis() - lastFrameSeenTime > 60000 && !BARITONE.isActive() && !isStuck) {
-            System.out.println("§c[MapFrameBreaker] §fNo frames for 60s - respawning to find better location");
+            System.out.println("[MapFrameBreaker] No frames seen for 60s. Respawning.");
             sendClientPacket(new ServerboundChatPacket("/kill"));
             isStuck = true;
-            currentTarget = null;
+            clearCurrentTargetAndWander();
         } else {
             if (distanceMoved > 0.3) {
                 lastMoveTime = System.currentTimeMillis();
                 if (isStuck) {
-                    System.out.println("§a[MapFrameBreaker] §fUnstuck! Back to frame hunting!");
+                    System.out.println("[MapFrameBreaker] Unstuck. Back to frame hunting.");
                     isStuck = false;
                     stuckMiningCount = 0;
                 }
@@ -697,10 +904,11 @@ public class MapFrameBreakerModule extends Module {
             if (entity.getEntityType() == EntityType.ITEM_FRAME && entity instanceof EntityLiving living) {
 
                 lastFrameSeenTime = System.currentTimeMillis();
+                if (!shouldTargetFrame(living)) continue;
                 double distance = calculate3DDistance(living);
 
                 if (distance <= BREAK_DISTANCE) {
-                    String location = (int)living.getX() + "," + (int)living.getY() + "," + (int)living.getZ();
+                    String location = formatLocation(living);
 
                     if (unreachableFrames.contains(location)) continue;
                     if (brokenFrames.contains(location)) continue;
@@ -719,7 +927,7 @@ public class MapFrameBreakerModule extends Module {
 
     private boolean breakFrame(EntityLiving frame) {
         int entityId = frame.getEntityId();
-        String location = (int)frame.getX() + "," + (int)frame.getY() + "," + (int)frame.getZ();
+        String location = formatLocation(frame);
 
         breakAttempts++;
         totalBreakAttempts++; // Track total attempts
@@ -757,11 +965,7 @@ public class MapFrameBreakerModule extends Module {
             System.out.println("§7Type §e!frames §7to see your stats!");
 
             if (currentTarget != null && currentTarget.getEntityId() == entityId) {
-                currentTarget = null;
-                targetTicks = 0;
-                targetStartTime = 0;
-                closestDistanceToTarget = Double.MAX_VALUE;
-                stuckNearTargetCount = 0;
+                clearCurrentTarget();
             }
 
             brokenFrames.add(location);
@@ -774,10 +978,7 @@ public class MapFrameBreakerModule extends Module {
                 unreachableFrames.add(location);
 
                 if (currentTarget != null && currentTarget.getEntityId() == entityId) {
-                    currentTarget = null;
-                    targetTicks = 0;
-                    targetStartTime = 0;
-                    closestDistanceToTarget = Double.MAX_VALUE;
+                    clearCurrentTarget();
                 }
                 breakAttempts = 0;
             }
@@ -786,8 +987,8 @@ public class MapFrameBreakerModule extends Module {
     }
 
     private void handleTargetFrame() {
-        boolean targetExists = false;
-        EntityLiving updatedFrame = null;
+        EntityLiving updatedFrame = findTrackedTarget();
+        boolean targetExists = updatedFrame != null;
 
         for (Entity entity : CACHE.getEntityCache().getEntities().values()) {
             if (entity.getEntityType() == EntityType.ITEM_FRAME &&
@@ -801,24 +1002,20 @@ public class MapFrameBreakerModule extends Module {
 
         if (!targetExists) {
             System.out.println("§7[MapFrameBreaker] §fTarget frame disappeared - looking for next one");
-            currentTarget = null;
-            breakAttempts = 0;
-            targetTicks = 0;
-            targetStartTime = 0;
-            closestDistanceToTarget = Double.MAX_VALUE;
-            stuckNearTargetCount = 0;
-            consecutivePathfindFailures = 0;
-            wanderToNewLocation();
+            clearCurrentTargetAndWander();
             return;
         }
 
         currentTarget = updatedFrame;
-        String location = (int)currentTarget.getX() + "," + (int)currentTarget.getY() + "," + (int)currentTarget.getZ();
+        String location = formatLocation(currentTarget);
+
+        if (!shouldTargetFrame(currentTarget)) {
+            clearCurrentTargetAndWander();
+            return;
+        }
 
         if (unreachableFrames.contains(location)) {
-            currentTarget = null;
-            consecutivePathfindFailures = 0;
-            wanderToNewLocation();
+            clearCurrentTargetAndWander();
             return;
         }
 
@@ -832,16 +1029,7 @@ public class MapFrameBreakerModule extends Module {
             yProgressStuckTicks++;
         }
 
-        String levelCategory;
-        if (Math.abs(yDifference) <= SAME_LEVEL_TOLERANCE) {
-            levelCategory = "SAME LEVEL";
-        } else if (yDifference <= NEXT_LEVEL_TOLERANCE && yDifference > SAME_LEVEL_TOLERANCE) {
-            levelCategory = "NEXT LEVEL";
-        } else if (yDifference > NEXT_LEVEL_TOLERANCE) {
-            levelCategory = "HIGH FRAME";
-        } else {
-            levelCategory = "BELOW";
-        }
+        String levelCategory = getLevelCategory(yDifference);
 
         if (Math.abs(yDifference) > MAX_REACHABLE_Y) {
             System.out.println("§e[MapFrameBreaker] §f[" + levelCategory + "] Frame at Y=" + (int)currentTarget.getY() +
@@ -903,13 +1091,7 @@ public class MapFrameBreakerModule extends Module {
 
                 if (!hasClimbableBlocksNearFrame) {
                     System.out.println("§c[MapFrameBreaker] §fNo climbable blocks and no height gain - giving up on this frame");
-                    unreachableFrames.add(location);
-                    currentTarget = null;
-                    targetTicks = 0;
-                    targetStartTime = 0;
-                    closestDistanceToTarget = Double.MAX_VALUE;
-                    consecutivePathfindFailures = 0;
-                    wanderToNewLocation();
+                    markTargetUnreachable(location, true);
                     return;
                 } else {
                     System.out.println("§e[MapFrameBreaker] §fHas climbable blocks but not gaining height - trying different approach");
@@ -919,10 +1101,7 @@ public class MapFrameBreakerModule extends Module {
 
         if (targetAgeSeconds > MAX_TARGET_AGE_SECONDS && !inPersistenceZone) {
             System.out.println("§e[MapFrameBreaker] §fBeen on this target too long - moving on");
-            unreachableFrames.add(location);
-            currentTarget = null;
-            consecutivePathfindFailures = 0;
-            wanderToNewLocation();
+            markTargetUnreachable(location, true);
             return;
         }
 
@@ -930,10 +1109,7 @@ public class MapFrameBreakerModule extends Module {
             double progressMade = targetDistanceWhenChosen - closestDistanceToTarget;
             if (progressMade < PROGRESS_REQUIRED && noProgressTicks > 2400) {
                 System.out.println("§e[MapFrameBreaker] §fNo progress for 2 minutes - time to find another frame");
-                unreachableFrames.add(location);
-                currentTarget = null;
-                consecutivePathfindFailures = 0;
-                wanderToNewLocation();
+                markTargetUnreachable(location, true);
                 return;
             } else if (progressMade >= PROGRESS_REQUIRED) {
                 targetTicks = 0;
@@ -950,11 +1126,7 @@ public class MapFrameBreakerModule extends Module {
                 if (consecutivePathfindFailures > MAX_PATHFIND_FAILURES) {
                     System.out.println("§c[MapFrameBreaker] §fFailed to path to this frame " +
                             MAX_PATHFIND_FAILURES + " times - marking unreachable");
-                    unreachableFrames.add(location);
-                    currentTarget = null;
-                    consecutivePathfindFailures = 0;
-                    lastFailedTarget = "";
-                    wanderToNewLocation();
+                    markTargetUnreachable(location, true);
                     return;
                 }
             } else {
@@ -963,9 +1135,7 @@ public class MapFrameBreakerModule extends Module {
             }
 
             System.out.println("§e[MapFrameBreaker] §fPathfinding to frame at X=" + targetX + " Z=" + targetZ);
-            BARITONE.pathTo(new GoalXZ(targetX, targetZ));
-            lastGoalX = targetX;
-            lastGoalZ = targetZ;
+            pathToTarget(currentTarget);
         }
     }
 
@@ -986,16 +1156,7 @@ public class MapFrameBreakerModule extends Module {
             double yDiff = currentTarget.getY() - CACHE.getPlayerCache().getY();
             double yGained = highestYReached - CACHE.getPlayerCache().getY();
 
-            String levelCategory;
-            if (Math.abs(yDiff) <= SAME_LEVEL_TOLERANCE) {
-                levelCategory = "SAME LEVEL";
-            } else if (yDiff <= NEXT_LEVEL_TOLERANCE && yDiff > SAME_LEVEL_TOLERANCE) {
-                levelCategory = "NEXT LEVEL";
-            } else if (yDiff > NEXT_LEVEL_TOLERANCE) {
-                levelCategory = "HIGH FRAME";
-            } else {
-                levelCategory = "BELOW";
-            }
+            String levelCategory = getLevelCategory(yDiff);
 
             if (yDiff > 2.0) {
                 System.out.println("§e[MapFrameBreaker] §f[" + levelCategory + "] Frame is " + String.format("%.1f", yDiff) +
@@ -1049,15 +1210,13 @@ public class MapFrameBreakerModule extends Module {
 
             if (stuckTime > 30000) {
                 System.out.println("§c[MapFrameBreaker] §fCan't reach this frame after 30s - must be impossible");
-                String location = (int)currentTarget.getX() + "," +
-                        (int)currentTarget.getY() + "," +
-                        (int)currentTarget.getZ();
+                String location = formatLocation(currentTarget);
                 unreachableFrames.add(location);
 
                 System.out.println("§c[MapFrameBreaker] §fRespawning to try a different area");
                 sendClientPacket(new ServerboundChatPacket("/kill"));
                 isStuck = true;
-                currentTarget = null;
+                clearCurrentTarget();
                 if (BARITONE.isActive()) BARITONE.stop();
                 return true;
             }
@@ -1079,8 +1238,9 @@ public class MapFrameBreakerModule extends Module {
         for (Entity entity : CACHE.getEntityCache().getEntities().values()) {
             if (entity.getEntityType() == EntityType.ITEM_FRAME && entity instanceof EntityLiving living) {
                 lastFrameSeenTime = System.currentTimeMillis();
+                if (!shouldTargetFrame(living)) continue;
 
-                String location = (int)living.getX() + "," + (int)living.getY() + "," + (int)living.getZ();
+                String location = formatLocation(living);
 
                 if (unreachableFrames.contains(location)) continue;
                 if (brokenFrames.contains(location)) continue;
@@ -1147,28 +1307,7 @@ public class MapFrameBreakerModule extends Module {
                         " blocks away at Y=" + (int)bestTarget.getY());
             }
 
-            currentTarget = bestTarget;
-            breakAttempts = 0;
-            targetTicks = 0;
-            targetStartTime = System.currentTimeMillis();
-            targetDistanceWhenChosen = bestDistance;
-            closestDistanceToTarget = Double.MAX_VALUE;
-            noProgressTicks = 0;
-            stuckNearTargetCount = 0;
-            inPersistenceZone = false;
-            failedPathAttempts = 0;
-            consecutivePathfindFailures = 0;
-
-            targetFrameY = bestTarget.getY();
-            highestYReached = CACHE.getPlayerCache().getY();
-            yProgressStuckTicks = 0;
-
-            analyzeTerrainForFrame(currentTarget);
-
-            if (BARITONE.isActive()) BARITONE.stop();
-            lastGoalX = (int)bestTarget.getX();
-            lastGoalZ = (int)bestTarget.getZ();
-            BARITONE.pathTo(new GoalXZ(lastGoalX, lastGoalZ));
+            initializeTarget(bestTarget, bestDistance);
         }
 
         if (tickCounter % 12000 == 0) {
@@ -1201,22 +1340,10 @@ public class MapFrameBreakerModule extends Module {
         System.out.println("§c[MapFrameBreaker] §fBot died! Respawn and continue the mission...");
         currentTarget = null;
         isStuck = false;
-        breakAttempts = 0;
-        targetTicks = 0;
-        targetStartTime = 0;
         sameGoalCount = 0;
-        closestDistanceToTarget = Double.MAX_VALUE;
         lastMoveTime = System.currentTimeMillis();
         lastFrameSeenTime = System.currentTimeMillis();
-        stuckNearTargetCount = 0;
-        inPersistenceZone = false;
         stuckMiningCount = 0;
-        failedPathAttempts = 0;
-        hasClimbableBlocksNearFrame = false;
-        highestYReached = 0;
-        targetFrameY = 0;
-        yProgressStuckTicks = 0;
-        consecutivePathfindFailures = 0;
 
         movementCheckStartX = CACHE.getPlayerCache().getX();
         movementCheckStartZ = CACHE.getPlayerCache().getZ();
